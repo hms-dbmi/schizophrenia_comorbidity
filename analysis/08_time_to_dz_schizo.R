@@ -2,28 +2,34 @@
 # use 3-hit criteria
 
 start_time <- Sys.time()
-
 library(vroom)
 library(survival)
 library(dplyr)
+library(lubridate)
 
 args <- commandArgs()
 print(args)
 phe=args[6]
 
 # identify all the icd codes for this phecode
-phecode_df <- read.csv('XXX/schizo/data/phecode_update.txt',colClasses = c('PheWASCode'='character'))
+phecode_df <- read.csv('/XXX/data/phecode_update.txt',colClasses = c('PheWASCode'='character'))
 df <- phecode_df[phecode_df$PheWASCode == phe,]
 #icd_list <- paste(shQuote(df$IcdCode, type="sh"), collapse=", ")
 icd_list <- list(unique(df$IcdCode))[[1]]
 remove(phecode_df, df)
 
 # get all icds of patients with 3-hit schizo and their matching controls
-pairs <- vroom('XXX/schizo/data/schizo_match_BirthyearGenderZip_3hit_noHx_15yo_and_above.csv')
-case_icds_3hit <- vroom('XXX/schizo/data/retrieved_data/case_ctrl_icds/case_icds_3hit.txt')
+# load patient enrollment and schizo onset index date information 
+pairs <- vroom('XXX/data/schizo_match_BirthyearGenderZip_3hit_noHx_15yo_and_above.csv')
+
+cohort <- vroom('XXX/data/retrieved_data/schizo_cohort_3hit_M_noHx.csv',col_select=c('MemberId'))
+
+pairs <- pairs  %>% filter(case_id %in% cohort$MemberId)
+
+case_icds_3hit <- vroom('XXX/data/retrieved_data/case_ctrl_icds/case_icds_3hit.txt')
 print(paste('Finished loading all the cases!', Sys.time()))
 
-ctrl_icds_3hit <- vroom('XXX/schizo/data/retrieved_data/case_ctrl_icds/ctrl_icds_3hit.txt')
+ctrl_icds_3hit <- vroom('XXX/data/retrieved_data/case_ctrl_icds/ctrl_icds_3hit.txt')
 print(paste('Finished loading all the ctrls!', Sys.time()))
 
 # subset only the entries in this phecode
@@ -34,6 +40,7 @@ remove(case_icds_3hit)
 ctrl_icds_phe <- ctrl_icds_3hit %>%
     filter(Icd %in% icd_list)
 remove(ctrl_icds_3hit)
+
 
 ### make sure neither case nor control in the pair had the condition 12 months before 
 case_existing <- pairs %>%
@@ -112,9 +119,10 @@ sd <- survdiff(Surv(day, status) ~ schizo, data = df_life) # get output
 cox_mod <- coxph(Surv(day, status) ~ schizo, data = df_life)
 HR <- coef(summary(cox_mod))[2]
 pval <- coef(summary(cox_mod))[5]
+ci_low <- exp(confint(cox_mod))[1]
+ci_high <- exp(confint(cox_mod))[2]
 
-line <- paste(phe, sd$obs[1], sd$exp[1], sd$obs[2], sd$exp[2], HR, pval, sep = ',')
-write(line,file="XXX/schizo/results/analysis_on_local_icds/time_to_dz_schizo_3hit.csv",append=TRUE)
+line <- paste(phe, sd$obs[1], sd$exp[1], sd$obs[2], sd$exp[2], HR, pval, ci_low, ci_high, sep = ',')
+write(line,file="/XXX/results/analysis_on_local_icds/time_to_dz_schizo_3hit_M_no_Hx_15yo_and_above.csv",append=TRUE)
 end_time <- Sys.time()
-
 print(paste('Phewas code',phe,'started at',start_time,'and finished at', end_time,'. Time difference is', end_time-start_time))
