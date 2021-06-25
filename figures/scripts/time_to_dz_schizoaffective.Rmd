@@ -1,0 +1,160 @@
+---
+title: "time_to_dz_schizoaffective"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir='/Users/chenyuelu/Library/Mobile Documents/com~apple~CloudDocs/Desktop/things/MBI/research/YuLab/schizophrenia/')
+
+```
+
+## R 
+
+```{r libraries}
+rm(list=ls())
+library(dplyr)
+library(qqman)
+library(ggplot2)
+library(grid)
+library(RColorBrewer)
+library(PheWAS)
+library(scales)
+library(stringr)
+library(ggrepel)
+```
+
+```{r}
+# get phecode_update 
+phewas_lookup <- read.csv("results/phecode_update.txt",colClasses = c('PheWASCode'='character'))
+# get phecode_map
+load(url("https://github.com/PheWAS/PheWAS/blob/master/data/phecode_map.rda?raw=true"))
+load(url("https://github.com/PheWAS/PheWAS/blob/master/data/pheinfo.rda?raw=true"))
+```
+
+```{r}
+# for others, add 2hit or 3hit to the end of time_to_dz_schizoaffective
+time_to_dz<- read.csv("results/noHx/time_to_dz_schizoaffective_3hit_w_ci_noHx_15yo_and_above.csv", header = T, col.names = c('phecode','ctrl_w_dz','ctrl_exp','case_w_dz','case_exp','hazard_ratio','pval','ci_low','ci_high'),colClasses = c('phecode'='character'))
+```
+
+
+```{r merge and adjust p}
+time_to_dz_merged <- left_join(time_to_dz, select(phewas_lookup, PheWASCode, PheWASString), by = c("phecode"="PheWASCode")) %>% distinct()
+
+time_to_dz_merged <- time_to_dz_merged %>%
+  # mutate(pval_fdr=p.adjust(pval, method = 'fdr')) %>%
+  # mutate(pval_bonferroni=p.adjust(pval, method='bonferroni')) %>%
+  # remove duplicate phecodes from icd9 and icd10
+  group_by(phecode) %>% 
+  slice(1) %>% 
+  select(c('phecode','case_w_dz','ctrl_w_dz','hazard_ratio','pval','ci_low','ci_high','PheWASString')) %>%
+  filter(!phecode == '295') ## 295 and 295.1 should not be in this table
+
+colnames(time_to_dz_merged) <- c("Phecode","No. Schizoaffective Patients with P","No. Schizophrenia Patients with P","Hazard Ratio","P-Value","CI Lower Bound","CI Upper Bound","PheWAS Description")
+
+# write.csv(time_to_dz_merged, '/Users/chenyuelu/Desktop/things/MBI/research/YuLab/schizophrenia/results/phewas_tables/post_schizoaffective_time_to_dz_3hit_noHx_15yo_and_above.csv')
+```
+
+
+```{r filter phecodes}
+# filter to ensure at least x people in schizo and non schizo in phecode
+min_people <- 5
+time_to_dz_merged <- time_to_dz_merged %>%
+  filter(case_w_dz >= min_people & ctrl_w_dz >=min_people) # %>%
+  # filter really low p-values such as schizophrenia 
+  # filter(pval > 10^-100)
+
+# assign significance based on HR and pvalue
+pval_sig_threshold <- 0.05/(dim(time_to_dz_merged)[1]) # Bonferroni adjustment
+log2_HR_threshold <- 1
+time_to_dz_merged <- time_to_dz_merged %>%
+  mutate(Significance = case_when(pval < pval_sig_threshold & log2(hazard_ratio)> log2_HR_threshold ~ 'Schizoaffective disorder',
+                         pval < pval_sig_threshold & log2(hazard_ratio)<(-log2_HR_threshold) ~ 'Other schizophrenia',
+                         TRUE ~ 'Not Significant'))
+
+# check how many are considered significant 
+dim(time_to_dz_merged[which(time_to_dz_merged$Significance == 'Schizoaffective disorder'),])
+dim(time_to_dz_merged[which(time_to_dz_merged$Significance == 'Other schizophrenia'),])
+
+time_to_dz_merged %>%
+  filter(Significance =='Other schizophrenia') %>%
+  arrange(hazard_ratio)
+```
+
+
+```{r}
+# ggplot(data=time_to_dz_merged, aes(x=log2(hazard_ratio), y=-log10(pval_bonferroni))) +
+ggplot(data=time_to_dz_merged, aes(x=log2(hazard_ratio), y=-log10(pval))) +
+  labs(x = "log2(hazard ratio)", y = "-log10(p-value)") +
+  geom_point(aes(color = Significance)) +
+  scale_y_sqrt() +
+  # xlim(-5,3) +
+  geom_hline(yintercept = -log10(pval_sig_threshold), linetype="dashed", color = "red") +
+  geom_vline(xintercept = log2_HR_threshold, linetype="dashed", color = "grey") +
+  geom_vline(xintercept = -log2_HR_threshold, linetype="dashed", color = "grey") +
+  scale_color_manual(values = c("grey",'blue','red')) +
+  theme_classic() + 
+  theme(legend.position = "bottom", 
+        plot.title = element_text(size=18),
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10),
+        axis.text=element_text(size=10),
+        axis.title=element_text(size=10)) +
+  geom_label_repel(
+    data = subset(time_to_dz_merged, Significance!='Not Significant'),
+    aes(label = PheWASString),
+    size = 5,
+    min.segment.length = 0.1,
+    force=2,
+    force_pull = 0.1,
+    max.iter = 20000,
+    max.overlaps = 20,
+    box.padding = unit(0.35, "lines"),
+    point.padding = unit(0.3, "lines")
+  ) +   
+  ggtitle('Volcano plot comparing succeeding phenotypes between patients with schizoaffective disorder and patients with other types of schizophrenia') 
+
+```
+
+
+```{r Manhattan plot}
+# up in schizoaffective 
+df_to_plot <- time_to_dz_merged %>%
+  filter(log(hazard_ratio)>0) %>%
+  # select('phecode','pval','hazard_ratio','Significance','PheWASString') %>%
+  mutate(description=ifelse(Significance!='Not Significant', PheWASString,'')) %>%
+  select('phecode','pval','hazard_ratio','description')
+
+colnames(df_to_plot) <- c('phenotype','p','OR','description')
+
+phewasManhattan(d=df_to_plot, 
+                significant.line = pval_sig_threshold,
+                annotate.angle=20,
+                # max.y = 45,
+                title='Phenotypes at higher risk after schizoaffective disorder than other types of schizophrenia',
+                annotate.level = pval_sig_threshold,
+                annotate.phenotype.description = df_to_plot,
+                annotate.size=3,
+                size.x.labels = 6,
+                )
+
+# up in other schizo 
+df_to_plot <- time_to_dz_merged %>%
+  filter(log(hazard_ratio)<0) %>%
+  # select('phecode','pval','hazard_ratio','Significance','PheWASString') %>%
+  mutate(description=ifelse(Significance!='Not Significant', PheWASString,'')) %>%
+  select('phecode','pval','hazard_ratio','description')
+
+colnames(df_to_plot) <- c('phenotype','p','OR','description')
+
+phewasManhattan(d=df_to_plot, 
+                significant.line = pval_sig_threshold,
+                annotate.angle=20,
+                # max.y = 45,
+                title='Phenotypes at lower risk after schizoaffective disorder than other types of schizophrenia',
+                annotate.level = pval_sig_threshold,
+                annotate.phenotype.description = df_to_plot,
+                annotate.size=2.5,
+                size.x.labels = 6,
+                )
+```
