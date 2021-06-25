@@ -1,0 +1,274 @@
+---
+title: "time_to_dz"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir='/Users/chenyuelu/Library/Mobile Documents/com~apple~CloudDocs/Desktop/things/MBI/research/YuLab/schizophrenia/')
+```
+
+## R 
+
+```{r libraries}
+rm(list=ls())
+library(dplyr)
+library(qqman)
+library(ggplot2)
+library(grid)
+library(RColorBrewer)
+library(PheWAS)
+library(scales)
+library(stringr)
+library(ggrepel)
+```
+
+```{r}
+# get phecode_update 
+phewas_lookup <- read.csv("results/phecode_update.txt",colClasses = c('PheWASCode'='character'))
+# fix typo 
+phewas_lookup <- phewas_lookup %>% 
+  mutate(PheWASString = case_when(PheWASString=='Develomental delays and disorders'~'Developmental delays and disorders',TRUE ~ as.character(PheWASString)))
+# get phecode_map
+#load(url("https://github.com/PheWAS/PheWAS/blob/master/data/phecode_map.rda?raw=true"))
+#load(url("https://github.com/PheWAS/PheWAS/blob/master/data/pheinfo.rda?raw=true"))
+```
+
+```{r}
+# for others, add 2hit or 3hit to the end of time_to_dz_schizoaffective
+time_to_dz<- read.csv("results/noHx/time_to_dz_schizo_3hit_no_Hx_15yo_and_above.csv", header = T, col.names = c('phecode','ctrl_w_dz','ctrl_exp','case_w_dz','case_exp','hazard_ratio','pval','ci_low','ci_high'),colClasses = c('phecode'='character'))
+
+M_time_to_dz<- read.csv("results/noHx/time_to_dz_schizo_3hit_M_no_Hx_15yo_and_above.csv", header = T, col.names = c('phecode','ctrl_w_dz','ctrl_exp','case_w_dz','case_exp','hazard_ratio','pval','ci_low','ci_high'),colClasses = c('phecode'='character'))
+```
+
+
+```{r merge and adjust p}
+time_to_dz_merged <- left_join(time_to_dz, select(phewas_lookup, PheWASCode, PheWASString), by = c("phecode"="PheWASCode")) %>% distinct()
+
+# if pvalue is 0, make it 10e-330
+time_to_dz_merged[which(time_to_dz_merged$pval==0),]$pval <- .Machine$double.xmin # be consistent with phewasManhattan
+
+time_to_dz_merged <-time_to_dz_merged %>%
+  # mutate(pval_fdr=p.adjust(pval, method = 'fdr')) %>%
+  # mutate(pval_bonferroni=p.adjust(pval, method='bonferroni')) %>%
+  # remove duplicate phecodes from icd9 and icd10
+  group_by(phecode) %>% 
+  slice(1) %>%
+  select(c('phecode','case_w_dz','ctrl_w_dz','hazard_ratio','pval','ci_low','ci_high','PheWASString'))
+
+# colnames(M_time_to_dz_merged) <- c("Phecode",'Number of Schizophrenia Patients', 'Number of Non-Schizophrenic Participants',"Hazard Ratio","P-Value","CI Lower Bound","CI Upper Bound","PheWAS Description")
+
+# write.csv(M_time_to_dz_merged, '/Users/chenyuelu/Desktop/things/MBI/research/YuLab/schizophrenia/results/phewas_tables/post_schizo_time_to_dz_3hit_M_no_Hx_15yo_and_above.csv', row.names = F)
+# 
+# write.table(time_to_dz_merged, '/Users/chenyuelu/Desktop/things/MBI/research/YuLab/schizophrenia/report/manuscript/supp_table3.txt', sep = '\t', row.names = T)
+```
+
+
+```{r filter phecodes}
+# filter to ensure at least x people in schizo and non schizo in phecode
+#min_people <- 10
+# min_people <- 0
+
+#time_to_dz_merged <- time_to_dz_merged %>%
+#  filter(case_w_dz >= min_people & ctrl_w_dz >=min_people) #%>%
+  # filter really low p-values such as schizophrenia 
+  # filter(pval_bonferroni > 10^-100)
+
+time_to_dz_merged <- time_to_dz_merged %>%
+  filter(case_w_dz >= 10 & ctrl_w_dz >=10)
+  # filter(case_w_dz >= 0 & ctrl_w_dz >=0)
+
+# F_time_to_dz_merged <- F_time_to_dz_merged %>%
+#   filter(case_w_dz >= 10 & ctrl_w_dz >=10)
+# 
+# # assign significance based on HR and pvalue
+# F_pval_sig_threshold <- 0.05/(dim(F_time_to_dz_merged)[1]) # Bonferroni adjustment
+# M_pval_sig_threshold <- 0.05/(dim(M_time_to_dz_merged)[1]) # Bonferroni adjustment
+pval_sig_threshold <- 0.05/(dim(time_to_dz_merged)[1]) # Bonferroni adjustment
+
+log2_HR_threshold <- 4
+log2_HR_threshold_low <- 0.5
+time_to_dz_merged <- time_to_dz_merged %>%
+  mutate(Significance = case_when(pval < pval_sig_threshold & log2(hazard_ratio)> log2_HR_threshold ~ 'Schizophrenia',
+                         pval < pval_sig_threshold & hazard_ratio < log2_HR_threshold_low ~ 'Controls',
+                         TRUE ~ 'Not Significant')) %>%
+  mutate(anySignificance = ifelse(pval < pval_sig_threshold, 'Significant', 'Not Significant'))
+#
+# # check how many are considered significant
+dim(time_to_dz_merged[which(time_to_dz_merged$Significance == 'Controls'),])
+dim(time_to_dz_merged[which(time_to_dz_merged$Significance == 'Schizophrenia'),])
+
+dim(time_to_dz_merged[which(time_to_dz_merged$Significance == 'No Schizophrenia'),])
+```
+
+```{r sex stratification}
+head(M_time_to_dz_merged)
+head(F_time_to_dz_merged)
+
+F_prev <- F_time_to_dz_merged %>% arrange(desc(hazard_ratio)) %>% mutate(prevalence_F = case_w_dz/4904) %>% filter(pval < F_pval_sig_threshold)
+M_prev <- M_time_to_dz_merged %>% arrange(desc(hazard_ratio)) %>% mutate(prevalence_M = case_w_dz/8944) %>% filter(pval < M_pval_sig_threshold)
+
+F_not_M <- setdiff(F_prev$PheWASString, M_prev$PheWASString)
+M_not_F <- setdiff(M_prev$PheWASString, F_prev$PheWASString)
+
+F_prev %>% filter(PheWASString %in% F_not_M) %>% arrange(desc(hazard_ratio))
+M_prev %>% filter(PheWASString %in% M_not_F) %>% arrange(desc(hazard_ratio))
+
+# 
+# comp_prev <- merge(F_prev[c('phecode','PheWASString','case_w_dz','hazard_ratio','prevalence_F')], M_prev[c('phecode','case_w_dz','hazard_ratio','prevalence_M')], by = 'phecode', all = T)
+# 
+# colnames(comp_prev) <- c('phecode','PheWASString','case_w_dz_F','hazard_ratio_F','prevalence_F','case_w_dz_M','hazard_ratio_M','prevalence_M')
+# comp_prev %>% 
+#   # mutate(F_M_prev_ratio = prevalence_F/prevalence_M) %>% 
+#   mutate(F_M_HR_diff = hazard_ratio_F - hazard_ratio_M) %>% 
+#   # filter (case_w_dz_F > 5) %>%
+#   arrange(desc(F_M_HR_diff)) %>%
+#   select(phecode,PheWASString, case_w_dz_F, hazard_ratio_F, case_w_dz_M, hazard_ratio_M, F_M_HR_diff)
+# 
+# setdiff(F_sig$PheWASString, M_sig$PheWASString)
+# setdiff(M_sig$PheWASString, F_sig$PheWASString)
+
+```
+
+```{r unique phecodes in fig 2 but not fig 1}
+# intersection and unique phewas strings between pre_schizo_counts and time_to_schizo
+fig1_sig <- count_results_merged[which(count_results_merged$sig == 'Schizophrenia'),]$PheWASString
+fig2_sig <- time_to_dz_merged[which(time_to_dz_merged$Significance == 'Schizophrenia'),]$PheWASString
+
+unique_fig2 <- setdiff(fig1_sig, fig2_sig)
+unique_fig2 <- fig2_sig[!(fig2_sig %in% fig1_sig)]
+unique_fig1 <- fig1_sig[!(fig1_sig %in% fig2_sig)]
+
+time_to_dz_merged_unique_fig2 <- time_to_dz_merged %>%
+  filter(PheWASString %in% unique_fig2) %>%
+  arrange(hazard_ratio)
+
+# write.csv(time_to_dz_merged_unique_fig2, '/Users/chenyuelu/Desktop/things/MBI/research/YuLab/schizophrenia/results/unique_fig2.csv')
+
+# Manhattan 
+# df_to_plot <- time_to_dz_merged_unique_fig2[which(time_to_dz_merged_unique_fig2$hazard_ratio>1),][c('phecode','pval','hazard_ratio')]
+df_to_plot <- time_to_dz_merged[which(time_to_dz_merged$hazard_ratio>1),][c('phecode','pval','hazard_ratio')]
+
+colnames(df_to_plot) <- c('phenotype','p','OR')
+
+phewasManhattan(d=df_to_plot, 
+                significant.line = pval_sig_threshold,
+                annotate.angle=15,
+                # max.y = 50,
+                base.labels=F,
+                # y.axis.interval=50,
+                point.size=2, 
+                annotate.size=2.5,
+                size.x.labels = 10
+                )
+
+# volcano 
+ggplot(data=time_to_dz_merged_unique_fig2, aes(x=log2(hazard_ratio), y=-log10(pval))) +
+  ylim(0,30) +
+  geom_point(aes(color = Significance)) +
+  geom_hline(yintercept = -log10(pval_sig_threshold), linetype="dashed", color = "grey") +
+  scale_color_manual(values = c("grey",'blue','red')) +
+  theme_classic() + 
+  theme(legend.position = "bottom") +
+  geom_text_repel(
+    data = subset(time_to_dz_merged_unique_fig2, Significance!='Not Significant'),
+    aes(label = PheWASString),
+    size = 3,
+    min.segment.length = 3,
+    point.size = NA,
+  box.padding = unit(0.35, "lines"),
+  point.padding = unit(0.3, "lines")
+  )
+
+count_results_merged_unique_fig1 <- count_results_merged %>%
+  filter(PheWASString %in% unique_fig1)
+```
+
+```{r}
+ggplot(data=time_to_dz_merged, aes(x=log2(hazard_ratio), y=-log10(pval))) +
+  labs(x = "log2(hazard ratio)", y = "-log10(p-value)") +
+  geom_point(aes(color = Significance)) +
+  scale_y_sqrt() +
+  # xlim(0,6) +
+  # ylim(0,320) +
+  geom_hline(yintercept = -log10(pval_sig_threshold), linetype="dashed", color = "red") +
+  geom_vline(xintercept = log2_HR_threshold, linetype="dashed",color = "grey") +
+  geom_vline(xintercept = log2(log2_HR_threshold_low), linetype="dashed",color = "grey") +
+  geom_vline(xintercept = 1, linetype="dashed", color = "red") +
+  scale_color_manual(values = c('blue',"grey",'red')) +
+  theme_classic() +
+  theme(legend.position = "bottom", 
+        plot.title = element_text(size=17),
+        legend.title = element_text(size = 13),
+        legend.text = element_text(size = 13),
+        axis.text=element_text(size=15),
+        axis.title=element_text(size=15)) +
+  geom_label_repel(
+    data = subset(time_to_dz_merged, Significance!='Not Significant'),
+    aes(label = PheWASString),
+    size = 4.5,
+    min.segment.length = 0.1,
+    force=3,
+    force_pull = 0.01,
+    max.iter = 20000,
+    max.overlaps = 20,
+    box.padding = unit(0.2, "lines"),
+    point.padding = unit(0.3, "lines")
+  ) +    
+  ggtitle('Volcano plot comparing succeeding phenotypes between schizophrenia patients and their matched controls') 
+
+```
+
+
+```{r Manhattan plot}
+df_to_plot <- time_to_dz_merged[c('phecode','pval','hazard_ratio')]
+# df_to_plot <- df_to_plot[1:100,]
+phecode_anno <- time_to_dz_merged[which(time_to_dz_merged$Significance=='Schizophrenia'),]$phecode
+# df_to_plot <- time_to_dz_merged[c('phecode','pval')]
+colnames(df_to_plot) <- c('phenotype','p','OR')
+# colnames(df_to_plot) <- c('phenotype','p')
+# df_to_plot$description <- ifelse(time_to_dz_merged$Significance=='Schizophrenia', time_to_dz_merged$PheWASString,'')
+# df_to_plot$description <- NULL
+# df_to_plot %>%
+#   filter(OR>2) 
+
+# phenotypePlot(d=df_to_plot,
+phewasManhattan(d=df_to_plot,
+                # annotate=T,
+                annotate.phenotype=T,
+                annotate.list = phecode_anno,
+                # use.color=F,
+                suggestive.line = pval_sig_threshold,
+                significant.line = 10E-500,
+                annotate.angle=10,
+                # base.labels=F,
+                # size=2,
+                # direction=T,
+                max.y =330,
+                # max.x=1100,
+                y.axis.interval=50,
+                point.size=2,
+                title='Phenotypes more likely after schizophrenia than controls',
+                # annotate.level = pval_sig_threshold,
+                # annotate.phenotype.description = df_to_plot,
+                # annotate.phenotype.description = F,
+                annotate.size=5,
+                size.x.labels =14,
+                )
+
+# trace(phenotypePlot, edit = T) add min.segment.length = Inf to geom_text_repel
+
+# df_to_plot <- up_other[c('phecode','pval_bonferroni','hazard_ratio')]
+# colnames(df_to_plot) <- c('phenotype','p','OR')
+# 
+# phewasManhattan(d=df_to_plot, 
+#                 significant.line = pval_sig_threshold,
+#                 annotate.angle=20,
+#                 # max.y = 45,
+#                 title='Phenotypes less likely after schizophrenia',
+#                 annotate.level = pval_sig_threshold,
+#                 annotate.phenotype.description = T,
+#                 annotate.size=1.5,
+#                 size.x.labels = 4,
+#                 )
+```
