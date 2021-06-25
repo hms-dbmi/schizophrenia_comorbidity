@@ -1,0 +1,221 @@
+---
+title: "pre_schizo_counts"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir='/Users/chenyuelu/Library/Mobile Documents/com~apple~CloudDocs/Desktop/things/MBI/research/YuLab/schizophrenia/')
+```
+
+## R 
+
+```{r libraries}
+rm(list=ls())
+library(dplyr)
+library(qqman)
+library(ggplot2)
+library(grid)
+library(RColorBrewer)
+library(PheWAS)
+library(scales)
+library(stringr)
+library(ggrepel)
+library(data.table)
+
+```
+
+
+```{r}
+setwd('/Users/chenyuelu/Library/Mobile Documents/com~apple~CloudDocs/Desktop/things/MBI/research/YuLab/schizophrenia/')
+# get phecode_update 
+phewas_lookup <- read.csv("results/phecode_update.txt",colClasses = c('PheWASCode'='character'))
+# fix typo 
+phewas_lookup <- phewas_lookup %>% 
+  mutate(PheWASString = case_when(PheWASString=='Develomental delays and disorders'~'Developmental delays and disorders',
+                                  TRUE ~ as.character(PheWASString)))
+                                  # TRUE ~ 'gfdus'))
+# 
+# get phecode_map
+# load(url("https://github.com/PheWAS/PheWAS/blob/master/data/phecode_map.rda?raw=true"))
+# load(url("https://github.com/PheWAS/PheWAS/blob/master/data/pheinfo.rda?raw=true"))
+```
+
+```{r}
+# for others, add 2hit or 3hit to the end of pre_schizo_dz_counts
+count_result<- read.csv("results/noHx/pre_schizo_dz_counts_3hit_age15_30_noHx.csv", header = TRUE, col.names = c('phecode','case_w_dz','ctrl_w_dz','odds_ratio','pval','ci_low','ci_high'),colClasses = c('phecode'='character'))
+
+F_count_result<- read.csv("results/noHx/pre_schizo_dz_counts_3hit_age15_30_F_noHx.csv", header = TRUE, col.names = c('phecode','case_w_dz','ctrl_w_dz','odds_ratio','pval','ci_low','ci_high'),colClasses = c('phecode'='character'))
+M_count_result<- read.csv("results/noHx/pre_schizo_dz_counts_3hit_age15_30_M_noHx.csv", header = TRUE, col.names = c('phecode','case_w_dz','ctrl_w_dz','odds_ratio','pval','ci_low','ci_high'),colClasses = c('phecode'='character'))
+```
+
+```{r merge and adjust p}
+# merge results 
+count_results_merged <- left_join(count_result, select(phewas_lookup, PheWASCode, PheWASString), by = c("phecode"="PheWASCode")) %>% distinct()
+
+F_count_results_merged <- left_join(F_count_result, select(phewas_lookup, PheWASCode, PheWASString), by = c("phecode"="PheWASCode")) %>% distinct()
+M_count_results_merged <- left_join(M_count_result, select(phewas_lookup, PheWASCode, PheWASString), by = c("phecode"="PheWASCode")) %>% distinct()
+
+# if pvalue is 0, make it 10e-330
+count_results_merged[which(count_results_merged$pval==0),]$pval <- .Machine$double.xmin # be consistent with phewasManhattan
+F_count_results_merged[which(F_count_results_merged$pval==0),]$pval <- .Machine$double.xmin # be consistent with phewasManhattan
+M_count_results_merged[which(M_count_results_merged$pval==0),]$pval <- .Machine$double.xmin # be consistent with phewasManhattan
+
+count_results_merged <- count_results_merged %>% group_by(phecode) %>% slice(1)
+
+M_count_results_merged <- M_count_results_merged %>%
+  # mutate(pval_fdr=p.adjust(pval, method = 'fdr')) %>%
+  # mutate(pval_bonferroni=p.adjust(pval, method='bonferroni')) %>%
+  # remove duplicate phecodes from icd9 and icd10
+  group_by(phecode) %>% 
+  slice(1) #%>%
+  # arrange(desc(odds_ratio))
+
+F_count_results_merged <- F_count_results_merged %>% group_by(phecode) %>% slice(1)
+
+# colnames(M_count_results_merged) <- c('Phecode', 'Number of Schizophrenia Patients', 'Number of Non-Schizophrenic Participants', 'Odds Ratio', 'P-Value', 'CI Lower Bound', 'CI Upper Bound', 'PheWAS Description')
+# 
+# write.csv(M_count_results_merged, '/Users/chenyuelu/Desktop/things/MBI/research/YuLab/schizophrenia/results/phewas_tables/pre_schizo_dz_counts_3hit_M_age15_30_noHx.csv', row.names = F)
+```
+
+```{r filter phecodes}
+# filter to ensure at least 10 people in schizo and non schizo in phecode
+count_results_merged <- count_results_merged %>%
+  filter(case_w_dz >= 10 & ctrl_w_dz >=10)
+
+M_count_results_merged <- M_count_results_merged %>%
+  filter(case_w_dz >= 10 & ctrl_w_dz >=10)
+  # filter(case_w_dz >= 0 & ctrl_w_dz >=0)
+
+F_count_results_merged <- F_count_results_merged %>%
+  filter(case_w_dz >= 10 & ctrl_w_dz >=10)
+
+# assign significance based on OR and pvalue
+pval_sig_threshold <- 0.05/(dim(count_results_merged)[1])
+
+M_pval_sig_threshold <- 0.05/(dim(M_count_results_merged)[1])
+F_pval_sig_threshold <- 0.05/(dim(F_count_results_merged)[1])
+
+OR_threshold <- 8
+count_results_merged <- count_results_merged %>%
+# mutate(sig = ifelse(pval < pval_sig_threshold & odds_ratio > OR_threshold,
+# mutate(sig = ifelse(pval < pval_sig_threshold,
+                    # paste('pval < ', pval, ' & odds_ratio > ', OR_threshold, sep=''),
+                    # 'Schizophrenia',
+                    # 'Not Sig'))
+mutate(Significance = case_when(pval < pval_sig_threshold & odds_ratio> OR_threshold ~ 'Schizophrenia',
+pval < pval_sig_threshold & odds_ratio <1 ~ 'Controls',
+TRUE ~ 'Not Significant'))
+# check how many are considered significant
+dim(count_results_merged[which(count_results_merged$Significance != 'Not Significant'),])
+
+# comparing females and males 
+F_prev <- F_count_results_merged %>% arrange(desc(odds_ratio)) %>% mutate(prevalence_F = case_w_dz/4904) %>% filter(pval < F_pval_sig_threshold)
+M_prev <- M_count_results_merged %>% arrange(desc(odds_ratio)) %>% mutate(prevalence_M = case_w_dz/8944) %>% filter(pval < M_pval_sig_threshold)
+
+# F_prev %>% arrange(desc(prevalence)) %>% select(-c('ci_low','ci_high')) 
+# M_prev %>% arrange(desc(prevalence)) %>% select(-c('ci_low','ci_high'))
+# 
+comp_prev <- merge(F_prev[c('phecode','PheWASString','case_w_dz','odds_ratio','prevalence_F')], M_prev[c('phecode','case_w_dz','odds_ratio','prevalence_M')], by = 'phecode', all = T)
+# 
+colnames(comp_prev) <- c('phecode','PheWASString','case_w_dz_F','odds_ratio_F','prevalence_F','case_w_dz_M','odds_ratio_M','prevalence_M')
+# comp_prev %>% mutate(F_M_prev_ratio = prevalence_F/prevalence_M) %>% arrange(desc(F_M_prev_ratio))
+# comp_prev %>% mutate(F_M_OR_ratio = odds_ratio_F/odds_ratio_M) %>% arrange(desc(F_M_OR_ratio))
+
+F_not_M <- setdiff(F_prev$PheWASString, M_prev$PheWASString)
+M_not_F <- setdiff(M_prev$PheWASString, F_prev$PheWASString)
+
+F_sig <- F_prev %>% 
+  filter(PheWASString %in% F_not_M) %>% 
+  arrange(desc(odds_ratio)) 
+
+# merge(F_sig[c('phecode')], M_count_result[c('phecode','odds_ratio')], on ='phecode')
+comp_prev %>% 
+  filter(phecode %in% F_not_M) %>%
+  filter(odds_ratio_F > odds_ratio_M)
+
+comp_prev %>% 
+  filter(phecode %in% M_not_F) %>%
+  filter(odds_ratio_M > odds_ratio_F)
+
+M_prev %>% filter(PheWASString %in% M_not_F) %>% arrange(desc(odds_ratio))
+
+```
+
+```{r volcano plot}
+# pre-schizo counts 
+ggplot(data=count_results_merged, aes(x=log2(odds_ratio), y=-log10(pval))) + 
+  labs(x = "log2(odds ratio)", y = "-log10(p-value)") +
+  geom_point(aes(color = Significance)) +
+  # ylim(0,350) +  # xlim(-0.7,5.8) +
+  geom_hline(yintercept = -log10(pval_sig_threshold), linetype="dashed", 
+                color = "red") +
+  geom_vline(xintercept = log2(OR_threshold), linetype="dashed", 
+                color = "grey") +
+  geom_vline(xintercept = log2(1), linetype="dashed", 
+                color = "red") +
+  theme_classic() + 
+  # scale_y_continuous() +
+  scale_y_sqrt() +
+  # scale_color_manual(values = c("grey",'red')) +
+  scale_color_manual(values = c('blue',"grey",'red')) +
+  theme(legend.position = "bottom", 
+        plot.title = element_text(size=18),
+        legend.title = element_text(size = 13),
+        legend.text = element_text(size = 13),
+        axis.text=element_text(size=15),
+        axis.title=element_text(size=15)) +
+  geom_label_repel(
+    data = subset(count_results_merged, Significance != 'Not Significant'),
+    aes(label = PheWASString),
+    size = 5,
+    min.segment.length = 0.1,
+    force=2,
+    force_pull = 0.1,
+    max.iter = 20000,
+    max.overlaps = 20,
+    box.padding = unit(0.15, "lines"),
+    point.padding = unit(0.3, "lines")
+  ) +   
+  ggtitle('Volcano plot comparing preceding phenotypes between schizophrenia patients and their matched controls') 
+
+```
+
+```{r Manhattan plot}
+df_to_plot <- count_results_merged[c('phecode','pval','odds_ratio')]
+colnames(df_to_plot) <- c('phenotype','p','OR')
+# df_to_plot$description <- ifelse(df_to_plot$OR > OR_threshold & df_to_plot$p < pval_sig_threshold, count_results_merged$PheWASString,NA)
+# df_to_plot$description <- ifelse(df_to_plot$OR > OR_threshold & df_to_plot$p < pval_sig_threshold, count_results_merged$PheWASString,'')
+  #
+# df_to_plot[which(df_to_plot$OR > OR_threshold & df_to_plot$p < pval_sig_threshold),]$description <- count_results_merged[which(df_to_plot$OR > OR_threshold & df_to_plot$p < pval_sig_threshold),]$PheWASString
+
+# df_to_plot$description <- NULL
+# df_to_plot %>%
+#   filter(OR>2) 
+
+# trace(phenotypePlot, edit = T)
+phecode_anno <- count_results_merged[which(count_results_merged$Significance=='Schizophrenia'),]$phecode
+
+
+trace(phenotypePlot, edit = TRUE) 
+# line 153 change direction of x-axis text annotation: angle = 40, hjust = 0.7, vjust = 0.7 reference: https://stackoverflow.com/questions/7263849/what-do-hjust-and-vjust-do-when-making-a-plot-using-ggplot
+# line 232 change to geom_label_repel and add size = 5, min.segment.length = 0.1, force=2, force_pull = 0.1, max.iter = 20000, max.overlaps = 20, box.padding = unit(0.15, "lines")
+# comment out lines 128-130 to remove red line on top and change suggestiveline to red in line 127
+# optional: can change title size in last line 
+
+phewasManhattan(d=df_to_plot, 
+                annotate.phenotype=T,
+                suggestive.line = pval_sig_threshold,
+                significant.line = 10E-500,
+                annotate.list = phecode_anno,
+                annotate.angle=10,
+                max.y =330,
+                # max.x= 1250,
+                y.axis.interval=50,
+                point.size=2, 
+                title='Phenotypes occurred more frequently before schizophrenia',
+                # annotate.level = pval_sig_threshold,
+                annotate.size=5,
+                size.x.labels = 14
+                )
+```
