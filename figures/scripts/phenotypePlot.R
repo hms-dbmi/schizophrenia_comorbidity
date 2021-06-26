@@ -136,8 +136,8 @@ function (d, max.y, max.x, suggestive.line, significant.line,
             TRUE, FALSE))
         d <- d %>% mutate(fill = case_when(!annotate ~ 0.5, TRUE ~ 
             1))
-        print(head(d))
-        print(unique(d$color))
+        #print(head(d))
+        #print(unique(d$color))
         color.palette = unique(d[order(d$seq), ]$color)
         names(color.palette) = color.palette
         plot = plot + aes(seq, value, size = size, colour = color)
@@ -240,7 +240,7 @@ function (d, max.y, max.x, suggestive.line, significant.line,
         else {
             if (annotate.phenotype.description | annotate.phenotype | 
                 annotate.snp.w.phenotype) {
-                print(head(d))
+                #print(head(d))
                 plot = plot + if (!base.labels) {
                   ggrepel::geom_label_repel(aes(label = description), 
                     colour = "black", data = d[d$annotate, ], 
@@ -249,7 +249,7 @@ function (d, max.y, max.x, suggestive.line, significant.line,
                     max.iter = 20000, max.overlaps = 30, box.padding = unit(0.2, 
                       "lines"), point.padding = unit(0.2, "lines"), 
                     fill = alpha(d[which(d$annotate), ]$color, 
-                      0.3), segment.curvature = -0.5, segment.ncp = 10, 
+                      0.5), segment.curvature = -0.5, segment.ncp = 10, 
                     arrow = arrow(length = unit(0.015, "npc")), 
                     segment.angle = 40, segment.shape = 1, segment.linetype = 6, 
                     segment.alpha = 0.5)
