@@ -1,6 +1,3 @@
-## some personalization of the Manhattan plot
-## adapted from https://github.com/PheWAS/PheWAS/blob/master/R/phenotypePlot.R
-
 function (d, max.y, max.x, suggestive.line, significant.line, 
     size.x.labels = 9, size.y.labels = 9, switch.axis = F, sort.by.value = F, 
     sort.by.category.value = F, base.labels = F, annotate.phenotype.description, 
@@ -107,7 +104,10 @@ function (d, max.y, max.x, suggestive.line, significant.line,
     d <- d %>% mutate(description = case_when(description == 
         "Develomental delays and disorders" ~ "Developmental delays and disorders", 
         description == "Mental retardation" ~ "Intellectual Disabilities", 
-        TRUE ~ as.character(description)))
+        description == "Other persistent mental disorders due to conditions classified elsewhere" ~ 
+            "Other persistent mental disorders", description == 
+            "Skull and face fracture and other intercranial injury" ~ 
+            "Intercranial injury", TRUE ~ as.character(description)))
     if (missing(max.y)) 
         max.y = ceiling(max(d$value))
     if (switch.axis) {
@@ -132,6 +132,14 @@ function (d, max.y, max.x, suggestive.line, significant.line,
         if (!missing(suggestive.line) & !is.na(suggestive.line)) 
             plot = plot + geom_hline(yintercept = suggestive.line, 
                 colour = "red", alpha = I(1/3), size = 1)
+        d <- d %>% mutate(annotate = ifelse(phenotype %in% annotate.list, 
+            TRUE, FALSE))
+        d <- d %>% mutate(fill = case_when(!annotate ~ 0.5, TRUE ~ 
+            1))
+        print(head(d))
+        print(unique(d$color))
+        color.palette = unique(d[order(d$seq), ]$color)
+        names(color.palette) = color.palette
         plot = plot + aes(seq, value, size = size, colour = color)
         if (!sizes) 
             plot = plot + scale_size(range = c(point.size, point.size), 
@@ -139,6 +147,7 @@ function (d, max.y, max.x, suggestive.line, significant.line,
         plot = plot + geom_point()
         plot = plot + scale_colour_manual(values = color.palette, 
             guide = "none")
+        plot = plot + scale_alpha_manual(values = fill, guide = F)
         if (x.group.labels) {
             plot = plot + scale_x_continuous(name = x.axis.label, 
                 limits = c(1, max.x), breaks = labels$tick, labels = labels$label, 
@@ -236,11 +245,11 @@ function (d, max.y, max.x, suggestive.line, significant.line,
                   ggrepel::geom_label_repel(aes(label = description), 
                     colour = "black", data = d[d$annotate, ], 
                     size = annotate.size, angle = annotate.angle, 
-                    min.segment.length = 0, force = 200, force_pull = 1, 
+                    min.segment.length = 0, force = 100, force_pull = 1, 
                     max.iter = 20000, max.overlaps = 30, box.padding = unit(0.2, 
                       "lines"), point.padding = unit(0.2, "lines"), 
                     fill = alpha(d[which(d$annotate), ]$color, 
-                      0.2), segment.curvature = -0.5, segment.ncp = 10, 
+                      0.3), segment.curvature = -0.5, segment.ncp = 10, 
                     arrow = arrow(length = unit(0.015, "npc")), 
                     segment.angle = 40, segment.shape = 1, segment.linetype = 6, 
                     segment.alpha = 0.5)
